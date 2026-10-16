@@ -1,11 +1,15 @@
 #include <vnm_process_custody/owner.h>
 
+#include "../src/owner_protocol.h"
+
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -18,6 +22,92 @@ bool check(bool condition, const char* message)
 {
     if (!condition) std::fprintf(stderr, "FAIL: %s\n", message);
     return condition;
+}
+
+bool started_descriptor_contract()
+{
+    custody::Duplex_channel sender, receiver;
+    std::string error;
+    if (!check(custody::Duplex_channel::create_pair(
+            custody::k_owner_message_bytes, &sender, &receiver, &error),
+        "STARTED descriptor fixture opens a native control channel"))
+    {
+        return false;
+    }
+    custody::Owner_event started;
+    started.kind = custody::Owner_event_kind::STARTED;
+    started.root_exit.process_id = getpid();
+    if (!check(custody::detail::send_event(sender, started, &error),
+        "STARTED without a descriptor reaches the receiver"))
+    {
+        return false;
+    }
+    custody::Owner_event received;
+    bool ok = check(custody::receive_owner_event(receiver, &received, 1000, &error) ==
+            custody::Receive_status::FAILED,
+        "Linux STARTED without its process reference is a protocol failure");
+    custody::close_native_handle(received.root_reference);
+    custody::close_native_handle(received.pty_master);
+
+    started.root_reference = custody::posix_pidfd_open(getpid());
+    if (!check(started.root_reference >= 0, "valid STARTED fixture retains its own process reference")) {
+        return false;
+    }
+    const bool sent = custody::detail::send_event(sender, started, &error);
+    custody::close_native_handle(started.root_reference);
+    if (!check(sent, "valid STARTED transfers its process reference")) {
+        return false;
+    }
+    received = {};
+    ok &= check(custody::receive_owner_event(receiver, &received, 1000, &error) ==
+            custody::Receive_status::MESSAGE && received.kind == custody::Owner_event_kind::STARTED &&
+            received.root_exit.process_id == getpid() && received.root_reference >= 0,
+        "Linux STARTED with its process reference remains valid");
+    ok &= check(received.root_reference >= 0 &&
+            custody::posix_pidfd_send_signal(received.root_reference, 0) == 0,
+        "received process reference names the live fixture occurrence");
+    custody::close_native_handle(received.root_reference);
+    custody::close_native_handle(received.pty_master);
+    return ok;
+}
+
+bool native_receive_error_contract(bool fragmented)
+{
+    custody::Duplex_channel sender, receiver;
+    std::string error;
+    if (!check(custody::Duplex_channel::create_pair(
+            custody::k_owner_message_bytes, &sender, &receiver, &error),
+        "receive-error fixture opens a native control channel"))
+    {
+        return false;
+    }
+    if (fragmented) {
+        const std::uint8_t first_fragment[] = {
+            0, 0, 0, 1, // wire revision
+            0, 0, 0, 5, // fragment kind
+            0, 0, 0, 2, // total assembled bytes
+            0, 0, 0, 0, // initial offset
+            0,         // first of the two assembled bytes
+        };
+        if (!check(sender.send(first_fragment, sizeof(first_fragment)) == custody::Io_status::TRANSFERRED,
+            "partial owner fragment reaches the receiver"))
+        {
+            return false;
+        }
+    }
+    // The native frame announces one payload byte but carries none. Exercise
+    // both the initial read and continuation, before the owner decoder.
+    const std::uint8_t truncated_frame[] = {0, 0, 0, 1};
+    if (!check(::send(sender.native(), truncated_frame, sizeof(truncated_frame), MSG_NOSIGNAL) ==
+            sizeof(truncated_frame), "malformed native frame reaches the receiver"))
+    {
+        return false;
+    }
+    custody::Owner_event event;
+    const auto status = custody::receive_owner_event(receiver, &event, 1000, &error);
+    return check(status == custody::Receive_status::FAILED &&
+            error.find(std::to_string(EPROTO)) != std::string::npos,
+        "owner protocol retains the native receive error");
 }
 
 struct Run
@@ -70,7 +160,11 @@ bool receipt(Run& run, bool* started, bool* root_exited, int* exit_code, int* ma
         std::string error;
         const auto status = custody::receive_owner_event(run.control, &event, 100, &error);
         if (status == custody::Receive_status::TIMEOUT) continue;
-        if (status != custody::Receive_status::MESSAGE) return false;
+        if (status != custody::Receive_status::MESSAGE) {
+            std::fprintf(stderr, "owner receipt failed: status=%d error=%s started=%d root_exited=%d\n",
+                static_cast<int>(status), error.c_str(), *started, *root_exited);
+            return false;
+        }
         if (event.root_reference >= 0) close(event.root_reference);
         if (event.pty_master >= 0) {
             if (master) *master = event.pty_master;
@@ -123,6 +217,30 @@ bool exercise(const std::string& helper, const std::string& self, const std::str
     if (mode == "cancel" || mode == "timeout") {
         ok &= custody::send_owner_stop(run.control, mode == "cancel" ? 50 : 0, &error);
     }
+    if (mode == "late-stop") {
+        const auto deadline = std::chrono::steady_clock::now() + 5s;
+        while (!root_exited && std::chrono::steady_clock::now() < deadline) {
+            custody::Owner_event event;
+            const auto status = custody::receive_owner_event(run.control, &event, 100, &error);
+            if (status == custody::Receive_status::TIMEOUT) continue;
+            if (status != custody::Receive_status::MESSAGE) break;
+            custody::close_native_handle(event.root_reference);
+            custody::close_native_handle(event.pty_master);
+            if (event.kind == custody::Owner_event_kind::STARTED) started = true;
+            if (event.kind == custody::Owner_event_kind::ROOT_EXITED) {
+                root_exited = true;
+                exit_code = event.root_exit.exit_code;
+            }
+            if (event.kind == custody::Owner_event_kind::TREE_SETTLEMENT) break;
+        }
+        pollfd alive{reference, POLLIN, 0};
+        const bool retiring = started && root_exited && exit_code == 23 && poll(&alive, 1, 0) == 0;
+        ok &= check(retiring, "late STOP fixture prerequisite: normal root exit with a living descendant");
+        if (retiring) {
+            ok &= check(custody::send_owner_stop(run.control, 0, &error),
+                "STOP is accepted while normal-root cleanup owns the descendant");
+        }
+    }
     if (mode == "desktop-loss") run.control.close();
     if (mode == "owner-loss") {
         custody::posix_pidfd_send_signal(run.helper.process_handle, SIGKILL);
@@ -140,7 +258,8 @@ bool exercise(const std::string& helper, const std::string& self, const std::str
         if (mode != "desktop-loss") {
             ok &= check(receipt(run, &started, &root_exited, &exit_code, &master), "tree settlement receipt");
             ok &= check(started && root_exited, "workload birth and root exit are distinct events");
-            if (mode == "normal" || mode == "pty") ok &= check(exit_code == 23, "original workload exit status");
+            if (mode == "normal" || mode == "pty" || mode == "late-stop")
+                ok &= check(exit_code == 23, "original workload exit status");
         }
         ok &= check(run.wait(), "helper exits after cleanup");
     }
@@ -248,6 +367,9 @@ int fixture(const std::string& mode)
     if (child < 0) return 3;
     if (child == 0) {
         if (setsid() < 0) _exit(4);
+        // Keep the owner's existing graceful-retirement interval observable
+        // after root exit. The owner still ends this real child with SIGKILL.
+        if (mode == "late-stop" && signal(SIGTERM, SIG_IGN) == SIG_ERR) _exit(7);
         const pid_t self = getpid();
         if (write(4, &self, sizeof(self)) != sizeof(self)) _exit(5);
         close(4);
@@ -258,7 +380,7 @@ int fixture(const std::string& mode)
     char release;
     if (read(5, &release, 1) != 1) return 6;
     close(5);
-    if (mode == "normal" || mode == "pty" || mode == "owner-loss") {
+    if (mode == "normal" || mode == "pty" || mode == "owner-loss" || mode == "late-stop") {
         return 23;
     }
     while (true) pause();
@@ -268,11 +390,25 @@ int fixture(const std::string& mode)
 
 int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string(argv[1]) == "--started-descriptor") {
+        return started_descriptor_contract() ? 0 : 1;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--receive-error") {
+        bool ok = native_receive_error_contract(false);
+        ok &= native_receive_error_contract(true);
+        return ok ? 0 : 1;
+    }
+    if (argc == 3 && std::string(argv[1]) == "--late-stop") {
+        std::string error;
+        if (!custody::prepare_parent_process(&error)) return 2;
+        return exercise(argv[2], argv[0], "late-stop") ? 0 : 1;
+    }
     if (argc == 3 && std::string(argv[1]) == "--fixture") return fixture(argv[2]);
     if (argc != 2) return 2;
     std::string error;
     if (!custody::prepare_parent_process(&error)) return 2;
-    bool ok = abort_before_execution();
+    bool ok = started_descriptor_contract();
+    ok &= abort_before_execution();
     ok &= large_bounded_start(argv[1]);
     for (auto mode : {custody::Owner_mode::COMMAND, custody::Owner_mode::PTY}) {
         const bool passed = vacant_standard_slots(argv[1], mode);
