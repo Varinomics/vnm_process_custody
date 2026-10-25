@@ -9,6 +9,12 @@ The core supports Windows, Linux and macOS, requires C++20 and CMake 3.21 or
 newer, and has no Qt dependency. Its public target is
 `vnm_process_custody::vnm_process_custody`.
 
+The optional [terminal process owner](adapter/docs/building.md) implements the
+public, Qt-free `vnm_terminal::Terminal_process_owner` extension for POSIX hosts.
+The surface supplies native terminal I/O and an ordinary built-in owner without
+this repository. Enable `VNM_PROCESS_CUSTODY_BUILD_TERMINAL_OWNER` when an
+application needs retained receipts and the enhanced cleanup/accounting scope.
+
 ## Build and use
 
 For a standalone Linux or macOS build with the native tests:
@@ -89,10 +95,11 @@ Deliberately detached descendants, including descendants that create a new
 session, may survive. This is accepted technical debt for the initial native
 Mac scope, not transitive process-family containment. Ordinary foreground and
 background terminal jobs are not classified as deliberately detached: their
-controlling-PTY lifecycle belongs to the terminal backend. The command helper's
-group receipt does not establish cleanup of interactive jobs moved into other
-groups. Applications must use the terminal backend for that lifecycle.
-The terminal backend launches the same helper with `--darwin-pty-outcome-v1`.
+enhanced controlling-PTY lifecycle belongs to the optional terminal process owner.
+The command helper's group receipt does not establish cleanup of interactive jobs
+moved into other groups. Applications use the optional terminal process owner for
+that scope.
+The terminal process owner launches the same helper with `--darwin-pty-outcome-v1`.
 It retains the controlling PTY session while the shell runs in a separate
 foreground group. During cleanup, discovered group numbers are inputs to
 `TIOCSPGRP`, which validates membership in that retained session; `TIOCSIG`
@@ -110,7 +117,7 @@ Once output is retired, the helper revokes its retained terminal before exiting;
 post-retirement writes cannot keep the session leader's exit drain pending.
 Failure to retire the original terminal supplies no successful native outcome.
 
-Before sending START, the backend requires an accepted native receipt hook:
+Before sending START, the optional owner requires an accepted native receipt hook:
 the receiver must retain a local exact-helper status observer and persist its
 identity and `darwin-pty-owner-v1` contract. Root birth and exact root exit are
 separate retained receipts. This admitted helper's normal exit codes mean

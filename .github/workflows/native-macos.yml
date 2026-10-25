@@ -1,0 +1,215 @@
+name: Process Custody macOS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CMAKE_BUILD_TYPE: Release
+
+jobs:
+  build-and-test:
+    name: Process Custody And Terminal Owner (macOS, ${{ matrix.test_group }})
+    runs-on: macos-15-intel
+    strategy:
+      # A lost native-test runner must not cancel the independent test groups.
+      fail-fast: false
+      matrix:
+        test_group: [custody, custody-rights, remaining]
+    env:
+      TEST_GROUP: ${{ matrix.test_group }}
+      CCACHE_MAXSIZE: 2GiB
+      CCACHE_COMPILERCHECK: content
+      # Nested package builds inherit the launchers without caching their trees.
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Checkout surface contract
+        uses: actions/checkout@v5
+        with:
+          repository: Varinomics/vnm_terminal_surface
+          ref: master
+          path: surface
+          persist-credentials: false
+
+      - name: Prepare owner integration project
+        run: |
+          mkdir -p "${RUNNER_TEMP}/custody-ci-source"
+          cat > "${RUNNER_TEMP}/custody-ci-source/CMakeLists.txt" <<'CMAKE'
+          cmake_minimum_required(VERSION 3.25)
+          project(custody_owner_integration LANGUAGES C CXX)
+          include(CTest)
+          set(VNM_TERMINAL_SURFACE_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+          set(VNM_PROCESS_CUSTODY_BUILD_TESTS ON CACHE BOOL "" FORCE)
+          set(VNM_PROCESS_CUSTODY_BUILD_TERMINAL_OWNER ON CACHE BOOL "" FORCE)
+          set(VNM_PROCESS_CUSTODY_BUILD_TERMINAL_OWNER_TESTS ON CACHE BOOL "" FORCE)
+          add_subdirectory("$ENV{GITHUB_WORKSPACE}/surface" surface)
+          add_subdirectory("$ENV{GITHUB_WORKSPACE}" custody)
+          CMAKE
+
+      - name: Install and identify compiler cache
+        id: compiler_cache
+        run: |
+          brew install ccache
+          echo "CCACHE_DIR=${RUNNER_TEMP}/vnm-process-custody-ccache" >> "${GITHUB_ENV}"
+          {
+            ccache --version
+            xcodebuild -version
+            xcrun --show-sdk-path
+            xcrun --show-sdk-version
+            shasum -a 256 "$(xcrun --find clang++)" "$(command -v ccache)"
+          } | tee "${RUNNER_TEMP}/compiler-cache-toolchain.txt"
+          toolchain_hash=$(shasum -a 256 "${RUNNER_TEMP}/compiler-cache-toolchain.txt" | cut -d ' ' -f 1)
+          echo "key_prefix=${RUNNER_OS}-${RUNNER_ARCH}-ccache-${CMAKE_BUILD_TYPE}-${{ hashFiles('.github/workflows/native-macos.yml') }}-${toolchain_hash}-" >> "${GITHUB_OUTPUT}"
+
+      - name: Restore compiler cache
+        id: restore_compiler_cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.compiler_cache.outputs.key_prefix }}${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.test_group }}-build
+          # Compiler content, options and inputs remain validated by ccache.
+          restore-keys: |
+            ${{ steps.compiler_cache.outputs.key_prefix }}
+            ${{ runner.os }}-${{ runner.arch }}-ccache-${{ env.CMAKE_BUILD_TYPE }}-
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: '6.12.0'
+          arch: 'clang_64'
+          archives: 'qtbase qtdeclarative'
+          cache: 'true'
+
+      - name: Configure CMake
+        run: |
+          ccache --zero-stats
+          cmake -B build -S "${RUNNER_TEMP}/custody-ci-source" -G Ninja \
+            -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+            -DVNM_TERMINAL_BUILD_BENCHMARKS=OFF \
+            -DVNM_TERMINAL_ENABLE_PROFILING=OFF \
+            -DBUILD_TESTING=ON
+
+      - name: Build
+        id: build
+        run: |
+          cmake --build build --config ${CMAKE_BUILD_TYPE} --parallel 2
+
+      - name: Report main build compiler cache
+        if: ${{ !cancelled() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure') }}
+        run: |
+          ccache --show-stats --verbose | tee "${RUNNER_TEMP}/compiler-cache-stats.txt"
+          for source in build/_deps/*-src; do
+            if [[ -e "${source}/.git" ]]; then
+              revision=$(git -C "${source}" rev-parse HEAD)
+              printf '%s %s\n' "${source}" "${revision}"
+            fi
+          done > "${RUNNER_TEMP}/compiler-cache-sources.txt"
+
+      # A runner lost during tests cannot run post-job cache saves.
+      - name: Save main build compiler cache
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.restore_compiler_cache.outputs.cache-primary-key }}
+
+      - name: Upload main build cache statistics
+        if: ${{ !cancelled() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure') }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: macos-compiler-cache-${{ matrix.test_group }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/compiler-cache-*.txt
+          if-no-files-found: error
+
+      - name: Verify and record test groups
+        run: |
+          python3 - <<'PY'
+          import collections
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+
+          custody = '^vnm_process_custody_(tests|truncated_rights_tests)$'
+          filters = {
+              'custody': ['-R', '^vnm_process_custody_tests$'],
+              'custody-rights': ['-R', '^vnm_process_custody_truncated_rights_tests$'],
+              'remaining': ['-E', custody],
+          }
+          evidence = Path(os.environ['RUNNER_TEMP'])
+
+          def inventory(group, arguments):
+              result = subprocess.run(
+                  ['ctest', '--test-dir', 'build', '--show-only=json-v1', *arguments],
+                  check=True, capture_output=True, text=True)
+              (evidence / f'ctest-inventory-{group}.json').write_text(result.stdout)
+              return [test['name'] for test in json.loads(result.stdout)['tests']]
+
+          all_tests = inventory('all', [])
+          selected_group = os.environ['TEST_GROUP']
+          groups = ['custody', 'custody-rights', 'remaining']
+          selected_tests = []
+          for group in groups:
+              names = inventory(group, filters[group])
+              if not names:
+                  raise SystemExit(f'No tests selected for {group}')
+              print(f'{group}: {len(names)} tests', flush=True)
+              selected_tests.extend(names)
+          # CTest includes required fixtures in its inventory, so this also
+          # rejects a fixture accidentally shared across independent runners.
+          if collections.Counter(selected_tests) != collections.Counter(all_tests):
+              raise SystemExit('Test groups must cover every registered test exactly once')
+          (evidence / 'ctest-arguments.json').write_text(json.dumps(filters[selected_group]))
+          PY
+
+      - name: Upload test inventory before execution
+        uses: actions/upload-artifact@v6
+        with:
+          name: macos-test-inventory-${{ matrix.test_group }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ctest-inventory-*.json
+            ${{ runner.temp }}/ctest-arguments.json
+          if-no-files-found: error
+
+      - name: Run tests (${{ matrix.test_group }})
+        id: tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          evidence = Path(os.environ['RUNNER_TEMP'])
+          arguments = json.loads((evidence / 'ctest-arguments.json').read_text())
+          os.execvp('ctest', [
+              'ctest', '--test-dir', 'build', '--verbose', '--output-on-failure',
+              '--parallel', '1', '--no-tests=error',
+              '--output-log', str(evidence / 'ctest-output.log'),
+              '--output-junit', str(evidence / 'ctest-results.xml'),
+              *arguments,
+          ])
+          PY
+
+      - name: Upload test results
+        if: ${{ !cancelled() && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure') }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: macos-test-results-${{ matrix.test_group }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ctest-output.log
+            ${{ runner.temp }}/ctest-results.xml
+            build/Testing/Temporary/LastTest.log
+          if-no-files-found: error
