@@ -28,7 +28,9 @@ target_include_directories(vnm_process_custody PUBLIC
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 set_target_properties(vnm_process_custody PROPERTIES
     AUTOMOC OFF AUTOUIC OFF AUTORCC OFF POSITION_INDEPENDENT_CODE ON)
-if(MSVC AND VNM_TERMINAL_SANITIZE_ADDRESS)
+option(VNM_PROCESS_CUSTODY_SANITIZE_ADDRESS
+    "Build with MSVC AddressSanitizer and matching container annotations" OFF)
+if(MSVC AND VNM_PROCESS_CUSTODY_SANITIZE_ADDRESS)
     # CPU samples cross this boundary as std::optional, so custody and its
     # consumers need the host's matching sanitizer and annotation settings.
     target_compile_options(vnm_process_custody PUBLIC /fsanitize=address)
@@ -37,7 +39,9 @@ if(MSVC AND VNM_TERMINAL_SANITIZE_ADDRESS)
         _DISABLE_STRING_ANNOTATION)
 endif()
 if(WIN32)
-    target_compile_definitions(vnm_process_custody PRIVATE NOMINMAX)
+    # Atomic job admission through PROC_THREAD_ATTRIBUTE_JOB_LIST requires Windows 10.
+    target_compile_definitions(vnm_process_custody PRIVATE
+        NOMINMAX _WIN32_WINNT=0x0A00 WINVER=0x0A00)
     option(VNM_PROCESS_CUSTODY_ENABLE_TEST_HOOKS "Enable the maintained Windows native observation fixtures" OFF)
     if(VNM_PROCESS_CUSTODY_ENABLE_TEST_HOOKS)
         target_compile_definitions(vnm_process_custody PRIVATE
@@ -68,13 +72,9 @@ if(CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin)$")
     add_executable(vnm_process_custody_owner src/owner_main_posix.cpp)
     target_link_libraries(vnm_process_custody_owner PRIVATE vnm_process_custody)
     set_target_properties(vnm_process_custody_owner PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
-    set(vnm_process_custody_build_tests_default OFF)
-    if(BUILD_TESTING AND VNM_TERMINAL_SURFACE_BUILD_TESTING)
-        set(vnm_process_custody_build_tests_default ON)
-    endif()
     option(VNM_PROCESS_CUSTODY_BUILD_TESTS
         "Build the standalone native owner tests"
-        ${vnm_process_custody_build_tests_default})
+        ${PROJECT_IS_TOP_LEVEL})
     if(VNM_PROCESS_CUSTODY_BUILD_TESTS)
         enable_testing()
         find_package(Threads REQUIRED)

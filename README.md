@@ -5,11 +5,59 @@ separate command owner executable. The caller waits only its direct helper;
 the helper retains the workload's wait authority. Workload exit and cleanup
 settlement are separate events.
 
+The core supports Windows, Linux and macOS, requires C++20 and CMake 3.21 or
+newer, and has no Qt dependency. Its public target is
+`vnm_process_custody::vnm_process_custody`.
+
+## Build and use
+
+For a standalone Linux or macOS build with the native tests:
+
+```sh
+queued-build --slots 1 -- cmake -S . -B ../custody-build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DVNM_PROCESS_CUSTODY_BUILD_TESTS=ON
+queued-build --slots 4 -- cmake --build ../custody-build --parallel 4
+ctest --test-dir ../custody-build --output-on-failure
+queued-build --slots 1 -- cmake --install ../custody-build --prefix ../custody-install
+```
+
+On macOS, add `-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0` to configuration. Native
+tests are enabled by default when this is the top-level project and disabled
+when it is added as a subdirectory. Windows builds the native static library;
+there is no standalone Windows test target.
+MSVC consumers using AddressSanitizer must also set
+`VNM_PROCESS_CUSTODY_SANITIZE_ADDRESS=ON` so both sides use matching container
+annotations.
+
+An installed-package consumer sets `CMAKE_PREFIX_PATH` to the install prefix:
+
+```cmake
+find_package(vnm_process_custody CONFIG REQUIRED)
+target_link_libraries(my_application PRIVATE vnm_process_custody::vnm_process_custody)
+vnm_process_custody_deploy_owner(my_application)
+```
+
+Source consumers can instead use `add_subdirectory()` and the same target and
+deployment helper. On Linux and macOS, the deployment helper places the owner
+executable beside the application. Applications with a different bundle layout
+can supply `DESTINATION`; installed application layouts use
+`vnm_process_custody_install_owner(DESTINATION ... COMPONENT ...)`. Windows
+does not need a separate owner executable.
+
+## Cleanup and observation scope
+
 `Cleanup_scope` qualifies completion receipts. `UNSPECIFIED` means that the
 sender supplied no recognized scope capability and cannot establish a scoped
 cleanup claim. Linux and Windows owners report `TRANSITIVE_TREE`. Darwin owners
 report `OWNED_PROCESS_GROUPS`. Optional receipt extensions have their own tags,
 versions and lengths; an absent or unknown extension does not upgrade a claim.
+
+Darwin CPU accounting observes a root and discoverable descendants. A process
+starts contributing after its first observation, and credited CPU remains after
+it exits. Work before that first observation and children that start and exit
+between observations can be missed. The caller chooses the sampling interval;
+the tracker owns no timer or process-control authority. Query failure reports
+an unavailable sample rather than idle CPU.
 
 ## Darwin cleanup contract and technical debt
 
