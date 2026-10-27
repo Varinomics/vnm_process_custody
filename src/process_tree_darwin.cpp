@@ -1,6 +1,7 @@
 #include <vnm_process_custody/process_tree.h>
 
 #include <vnm_process_custody/process_clock.h>
+#include "pty_setup_error.h"
 
 #include <fcntl.h>
 #include <libproc.h>
@@ -563,15 +564,36 @@ bool Process_tree_owner::establish_pty(Native_handle master, Native_handle slave
     // Retiring the controlling terminal sends SIGHUP to its session leader.
     // The owner must survive its own teardown to return the typed outcome;
     // spawn() restores default signal dispositions for the workload.
-    if (m_impl->root != 0 || m_impl->pty || master < 0 || slave < 0 ||
-        (getsid(0) != owner && setsid() < 0) || sigaction(SIGHUP, &action, nullptr) != 0 ||
-        ioctl(slave, TIOCSCTTY, 0) != 0 ||
-        sigaction(SIGTTOU, &action, nullptr) != 0 || fstat(slave, &info) != 0)
-    {
+    if (m_impl->root != 0 || m_impl->pty || master < 0 || slave < 0) {
         if (error) {
-            *error = "persistent owner could not retain its controlling PTY";
+            *error = "Terminal setup state is invalid.";
         }
         return false;
+    }
+    const auto failed = [&](const char* operation, int code) {
+        if (error) {
+            *error = detail::pty_setup_error(operation, code);
+        }
+        return false;
+    };
+    const pid_t session = getsid(0);
+    if (session < 0) {
+        return failed("getsid", errno);
+    }
+    if (session != owner && setsid() < 0) {
+        return failed("setsid", errno);
+    }
+    if (sigaction(SIGHUP, &action, nullptr) != 0) {
+        return failed("sigaction(SIGHUP)", errno);
+    }
+    if (ioctl(slave, TIOCSCTTY, 0) != 0) {
+        return failed("ioctl(TIOCSCTTY)", errno);
+    }
+    if (sigaction(SIGTTOU, &action, nullptr) != 0) {
+        return failed("sigaction(SIGTTOU)", errno);
+    }
+    if (fstat(slave, &info) != 0) {
+        return failed("fstat", errno);
     }
     m_impl->pty = true;
     m_impl->master = master;

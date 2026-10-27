@@ -105,3 +105,20 @@ if(vnm_process_custody_test_ninja)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/process_custody_runtime/check_runtime.cmake")
     set_tests_properties(vnm_terminal_process_custody_runtime_tests PROPERTIES TIMEOUT 120)
 endif()
+
+if(APPLE)
+    add_library(vnm_process_custody_pty_failure_interpose SHARED
+        posix_pty_backend/setup_failure_interpose.cpp)
+    set_target_properties(vnm_process_custody_pty_failure_interpose PROPERTIES AUTOMOC OFF)
+    add_executable(vnm_process_custody_pty_setup_failure_tests
+        posix_pty_backend/setup_failure_tests.cpp)
+    target_link_libraries(vnm_process_custody_pty_setup_failure_tests PRIVATE
+        vnm_process_custody::terminal_owner
+        vnm_terminal_surface::vnm_terminal_surface)
+    set_target_properties(vnm_process_custody_pty_setup_failure_tests PROPERTIES AUTOMOC OFF)
+    add_dependencies(vnm_process_custody_pty_setup_failure_tests vnm_process_custody_pty_failure_interpose)
+    add_test(NAME vnm_process_custody_pty_setup_failure_tests
+        COMMAND vnm_process_custody_pty_setup_failure_tests
+            $<TARGET_FILE:vnm_process_custody_pty_failure_interpose>)
+    set_tests_properties(vnm_process_custody_pty_setup_failure_tests PROPERTIES TIMEOUT 30)
+endif()
