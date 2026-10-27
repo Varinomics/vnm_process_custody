@@ -1,4 +1,7 @@
 #include "owner_protocol.h"
+#include "pty_setup_error.h"
+
+#include <cerrno>
 
 #include <algorithm>
 #include <chrono>
@@ -121,19 +124,43 @@ int run_owner(custody::Duplex_channel& channel, bool darwin_pty_contract)
     if (request.mode == custody::Owner_mode::PTY) {
 #if defined(__APPLE__)
         if (!darwin_pty_contract) return reject("Darwin PTY mode requires its explicit native outcome contract");
-        if (openpty(&master, &slave, nullptr, nullptr, nullptr) != 0 ||
-            fcntl(master, F_SETFD, FD_CLOEXEC) != 0 || fcntl(slave, F_SETFD, FD_CLOEXEC) != 0 ||
-            !resize_pty(master, request.dimensions) || !tree.establish_pty(master, slave, &error))
-        {
-            return reject("owner could not establish retained PTY: " + error);
+        if (openpty(&master, &slave, nullptr, nullptr, nullptr) != 0) {
+            return reject(detail::pty_setup_error("openpty", errno));
+        }
+        if (fcntl(master, F_SETFD, FD_CLOEXEC) != 0) {
+            return reject(detail::pty_setup_error("fcntl(master)", errno));
+        }
+        if (fcntl(slave, F_SETFD, FD_CLOEXEC) != 0) {
+            return reject(detail::pty_setup_error("fcntl(slave)", errno));
         }
 #else
         master = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
+        if (master < 0) {
+            return reject(detail::pty_setup_error("posix_openpt", errno));
+        }
+        if (grantpt(master) != 0) {
+            return reject(detail::pty_setup_error("grantpt", errno));
+        }
+        if (unlockpt(master) != 0) {
+            return reject(detail::pty_setup_error("unlockpt", errno));
+        }
         char slave_name[256];
-        if (master < 0 || grantpt(master) != 0 || unlockpt(master) != 0 ||
-            ptsname_r(master, slave_name, sizeof(slave_name)) != 0 ||
-            (slave = open(slave_name, O_RDWR | O_NOCTTY | O_CLOEXEC)) < 0 ||
-            !resize_pty(master, request.dimensions)) return reject("owner could not establish PTY");
+        const int name_error = ptsname_r(master, slave_name, sizeof(slave_name));
+        if (name_error != 0) {
+            return reject(detail::pty_setup_error("ptsname_r", name_error));
+        }
+        slave = open(slave_name, O_RDWR | O_NOCTTY | O_CLOEXEC);
+        if (slave < 0) {
+            return reject(detail::pty_setup_error("open", errno));
+        }
+#endif
+        if (!resize_pty(master, request.dimensions)) {
+            return reject(detail::pty_setup_error("ioctl(TIOCSWINSZ)", errno));
+        }
+#if defined(__APPLE__)
+        if (!tree.establish_pty(master, slave, &error)) {
+            return reject(error);
+        }
 #endif
         request.process.controlling_terminal = true;
         // The PTY guard owns the slave, not the transferred-request guard.
