@@ -52,6 +52,20 @@ int main(int argc, char** argv)
                 text.find(std::strerror(EACCES)) != std::string::npos,
                 "terminal error preserves the original native code and cause");
             ok &= check(messages.insert(text).second, "different failing operations remain distinguishable");
+            // Hosts show the user only the description before the delimiter and keep the rest
+            // of the message for the developer.
+            const auto delimiter = text.find(" | ");
+            ok &= check(delimiter != std::string::npos,
+                "terminal error separates the system description from the failing call");
+            if (delimiter != std::string::npos) {
+                const std::string description = text.substr(0, delimiter);
+                const std::string detail      = text.substr(delimiter + 3);
+                ok &= check(description == std::string(std::strerror(EACCES)) + ".",
+                    "text before the delimiter is the system description of the original error");
+                ok &= check(detail.find(operation) != std::string::npos &&
+                    detail.find(std::to_string(EACCES)) != std::string::npos,
+                    "text after the delimiter names the failing call and the original code");
+            }
         }
     }
     return ok ? 0 : 1;
