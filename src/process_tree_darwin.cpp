@@ -2,6 +2,7 @@
 
 #include <vnm_process_custody/process_clock.h>
 #include "pty_setup_error.h"
+#include "process_snapshot_common.h"
 
 #include <fcntl.h>
 #include <libproc.h>
@@ -19,6 +20,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <utility>
 
 namespace vnm::process_custody {
 namespace {
@@ -268,6 +270,46 @@ std::optional<std::uint64_t> Process_cpu_tracker::cpu_time_usec()
         return std::nullopt;
     }
     return static_cast<std::uint64_t>(microseconds);
+}
+
+std::optional<Process_snapshot> Process_cpu_tracker::process_snapshot()
+{
+    const auto cumulative = cpu_time_usec();
+    if (!cumulative && !m_impl->members.empty()) {
+        return std::nullopt;
+    }
+    auto snapshot = internal::make_process_snapshot();
+    mach_timebase_info_data_t timebase{};
+    if (!snapshot || mach_timebase_info(&timebase) != KERN_SUCCESS || timebase.denom == 0) {
+        return std::nullopt;
+    }
+    for (const auto& [process_id, member] : m_impl->members) {
+        Process_snapshot_entry entry;
+        entry.process_id = process_id;
+        entry.birth_token = member.birth_token;
+        struct proc_taskallinfo info{};
+        errno = 0;
+        if (proc_pidinfo(process_id, PROC_PIDTASKALLINFO, 0, &info, sizeof(info)) != sizeof(info)) {
+            if (errno != ESRCH) {
+                snapshot->processes.push_back(std::move(entry));
+            }
+            continue;
+        }
+        if (info.pbsd.pbi_pid != (std::uint32_t)process_id || birth_token(info.pbsd) != member.birth_token) {
+            continue;
+        }
+        const auto* name = info.pbsd.pbi_name[0] ? info.pbsd.pbi_name : info.pbsd.pbi_comm;
+        const auto capacity = info.pbsd.pbi_name[0] ? sizeof(info.pbsd.pbi_name) : sizeof(info.pbsd.pbi_comm);
+        entry.name.assign(name, strnlen(name, capacity));
+        const auto microseconds = ((__uint128_t)info.ptinfo.pti_total_user + info.ptinfo.pti_total_system)
+            * timebase.numer / ((std::uint64_t)timebase.denom * 1000);
+        if (microseconds <= std::numeric_limits<std::uint64_t>::max()) {
+            entry.cpu_time_usec = (std::uint64_t)microseconds;
+        }
+        entry.resident_memory_bytes = info.ptinfo.pti_resident_size;
+        snapshot->processes.push_back(std::move(entry));
+    }
+    return snapshot;
 }
 
 struct Process_tree_containment::Impl {};

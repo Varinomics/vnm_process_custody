@@ -384,6 +384,11 @@ std::optional<std::uint64_t> Process_cpu_scope::cpu_time_usec() const
     return cgroup_cpu_time_usec(m_impl->directory);
 }
 
+std::optional<Process_snapshot> Process_cpu_scope::process_snapshot() const
+{
+    return cgroup_process_snapshot(m_impl->directory);
+}
+
 std::optional<std::uint64_t> cgroup_cpu_time_usec(int directory)
 {
     std::string text;

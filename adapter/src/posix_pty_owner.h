@@ -145,6 +145,9 @@ public:
         auto start_request = request;
         {
             const std::lock_guard lock(m_cpu_mutex);
+            // The helper is the original unreaped direct child and is still
+            // awaiting START. Its subreaper family is private to this terminal.
+            m_helper_birth_token = pty_custody::process_birth_token(m_helper.process_id).value_or(0);
             const auto nonce = std::to_string(m_helper.process_id) + "-" +
                 std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
             if (m_cpu_scope.establish(nonce, nullptr)) {
@@ -332,6 +335,7 @@ public:
         {
             const std::lock_guard lock(m_cpu_mutex);
             m_cpu_accounting_admitted = false;
+            m_helper_birth_token = 0;
         }
         // Existing family cleanup retains its authority when the helper dies.
         // A successful group retirement cannot manufacture the lost wait
@@ -356,6 +360,20 @@ public:
         return m_cpu_tracker.cpu_time_usec();
 #endif
         return std::nullopt;
+    }
+
+    std::optional<Process_snapshot> process_snapshot() const
+    {
+        const std::lock_guard lock(m_cpu_mutex);
+#if defined(__linux__)
+        if (m_cpu_accounting_admitted) {
+            return m_cpu_scope.process_snapshot();
+        }
+        return pty_custody::observed_process_family_snapshot(
+            m_helper.process_id, m_helper_birth_token, false);
+#elif defined(__APPLE__)
+        return m_cpu_tracker.process_snapshot();
+#endif
     }
 
     bool confirmed() const noexcept
@@ -481,6 +499,7 @@ private:
 #if defined(__linux__)
     pty_custody::Process_cpu_scope m_cpu_scope;
     bool m_cpu_accounting_admitted = false;
+    std::uint64_t m_helper_birth_token = 0;
 #endif
 #if defined(__APPLE__)
     mutable pty_custody::Process_cpu_tracker m_cpu_tracker;

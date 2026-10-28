@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <algorithm>
 #include <cstdio>
 #include <optional>
 
@@ -151,10 +152,12 @@ public:
         m_grandchild_observer = custody::open_process_observer(ready.process_id,
             process_birth(ready.process_id), nullptr);
         m_initial_cpu_usec = ready.cpu_usec;
+        m_grandchild = ready.process_id;
         return m_grandchild_observer >= 0;
     }
 
     std::uint64_t initial_cpu_usec() const { return m_initial_cpu_usec; }
+    pid_t grandchild() const { return m_grandchild; }
 
     std::uint64_t work()
     {
@@ -202,6 +205,7 @@ public:
 
 private:
     pid_t m_intermediate = -1;
+    pid_t m_grandchild = -1;
     int m_commands = -1;
     int m_responses = -1;
     int m_release = -1;
@@ -219,6 +223,29 @@ bool accounts_work(std::optional<std::uint64_t> before, std::optional<std::uint6
         *after - *before <= measured * 5 / 4 + 5000;
 }
 
+bool snapshot_contains(custody::Process_cpu_tracker& tracker, pid_t process_id)
+{
+    const auto snapshot = tracker.process_snapshot();
+    if (!snapshot) {
+        return check(false, "native family snapshot is available");
+    }
+    const auto found = std::find_if(snapshot->processes.begin(), snapshot->processes.end(),
+        [process_id](const auto& entry) { return entry.process_id == process_id; });
+    bool ok = check(found != snapshot->processes.end(), "native snapshot includes the observed process");
+    if (found != snapshot->processes.end()) {
+        struct proc_taskallinfo native{};
+        const bool read = proc_pidinfo(process_id, PROC_PIDTASKALLINFO, 0, &native, sizeof(native)) == sizeof(native);
+        ok &= check(found->birth_token == process_birth(process_id) && !found->name.empty() &&
+                found->cpu_time_usec && found->resident_memory_bytes && read &&
+                *found->resident_memory_bytes >= native.ptinfo.pti_resident_size / 2 &&
+                *found->resident_memory_bytes <= native.ptinfo.pti_resident_size * 2,
+            "snapshot exposes original birth, native name, CPU, and independently checked resident bytes");
+    }
+    ok &= check(snapshot->sampled_at_usec > 0 && snapshot->logical_processor_count == (std::uint32_t)sysconf(_SC_NPROCESSORS_ONLN),
+        "snapshot provides monotonic sample time and whole-machine processor count");
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -228,6 +255,8 @@ int main()
     bool ok = check(!tracker.cpu_time_usec(), "uninitialized tracker is unavailable");
     tracker.set_root(getpid(), root_birth + 1);
     ok &= check(!tracker.cpu_time_usec(), "mismatched birth cannot attribute a recycled PID");
+    const auto wrong_snapshot = tracker.process_snapshot();
+    ok &= check(!wrong_snapshot || wrong_snapshot->processes.empty(), "mismatched identity never selects another process family");
     tracker.set_root(getpid(), root_birth);
     auto before = tracker.cpu_time_usec();
     ok &= check(before && *before == 0, "first observation baselines the root");
@@ -249,11 +278,14 @@ int main()
     const auto descendant_work = fixture.work();
     after = tracker.cpu_time_usec();
     ok &= check(accounts_work(before, after, descendant_work), "idle root includes its busy grandchild once");
+    ok &= snapshot_contains(tracker, getpid());
+    ok &= snapshot_contains(tracker, fixture.grandchild());
     ok &= check(fixture.retire_intermediate(), "intermediate exit reparents the known grandchild");
     before = tracker.cpu_time_usec();
     const auto reparented_work = fixture.work();
     after = tracker.cpu_time_usec();
     ok &= check(accounts_work(before, after, reparented_work), "known descendant remains counted after reparenting");
+    ok &= snapshot_contains(tracker, fixture.grandchild());
     ok &= check(fixture.retire_grandchild(), "descendant exits through its command pipe");
     const auto retired = tracker.cpu_time_usec();
     ok &= check(after && retired && *retired >= *after, "exited descendants retain their credited CPU");

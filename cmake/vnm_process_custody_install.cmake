@@ -63,7 +63,7 @@ function(vnm_process_custody_register_source_package)
     endif()
     get_target_property(provider_source vnm_process_custody::vnm_process_custody SOURCE_DIR)
     set(public_headers)
-    foreach(header IN ITEMS owner process_channel process_clock process_pipe process_spawn process_tree
+    foreach(header IN ITEMS owner process_channel process_clock process_pipe process_snapshot process_spawn process_tree
             terminal_native_receipt)
         list(APPEND public_headers "${provider_source}/include/vnm_process_custody/${header}.h")
     endforeach()

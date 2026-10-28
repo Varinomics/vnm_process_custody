@@ -99,6 +99,11 @@ public:
             static_cast<std::uint64_t>(sampled_at), static_cast<std::uint32_t>(processor_count), scope};
     }
 
+    std::optional<vnm_terminal::Process_snapshot> process_snapshot() const override
+    {
+        return m_owner.process_snapshot();
+    }
+
 private:
     Terminal_native_receipt_hook m_receipt_hook;
     internal::Posix_pty_owner m_owner;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vnm_process_custody/process_pipe.h>
+#include <vnm_process_custody/process_snapshot.h>
 #include <vnm_process_custody/process_spawn.h>
 
 #include <chrono>
@@ -134,6 +135,7 @@ public:
     bool adopt(int directory, const std::string& name, std::string* error);
     void configure_spawn(Spawn_request& request) const;
     std::optional<std::uint64_t> cpu_time_usec() const;
+    std::optional<Process_snapshot> process_snapshot() const;
     bool release(); // failed removal retains identity; shared retirement is idempotent
     bool terminate_and_release(std::chrono::milliseconds budget, std::string* error);
 
@@ -162,6 +164,7 @@ public:
     void set_root(std::int64_t process_id, std::uint64_t birth_token) noexcept;
     // Discovery or counter failures are unavailable, never an idle sample.
     std::optional<std::uint64_t> cpu_time_usec();
+    std::optional<Process_snapshot> process_snapshot();
     void reset() noexcept;
 
 private:
