@@ -101,7 +101,23 @@ public:
 
     std::optional<vnm_terminal::Process_snapshot> process_snapshot() const override
     {
-        return m_owner.process_snapshot();
+        auto snapshot = m_owner.process_snapshot();
+        if (!snapshot) {
+            return std::nullopt;
+        }
+        vnm_terminal::Process_snapshot result;
+        result.sampled_at_usec         = snapshot->sampled_at_usec;
+        result.logical_processor_count = snapshot->logical_processor_count;
+        result.processes.reserve(snapshot->processes.size());
+        for (auto& process : snapshot->processes) {
+            result.processes.push_back({
+                process.process_id,
+                process.birth_token,
+                std::move(process.name),
+                process.cpu_time_usec,
+                process.resident_memory_bytes});
+        }
+        return result;
     }
 
 private:
