@@ -12,16 +12,28 @@ defaults:
 
 env:
   CMAKE_BUILD_TYPE: Release
+  CMAKE_OSX_DEPLOYMENT_TARGET: '15.0'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
-    name: Process Custody And Terminal Owner (macOS, ${{ matrix.test_group }})
-    runs-on: macos-15-intel
+    name: Process Custody And Terminal Owner (macOS ${{ matrix.arch }}, ${{ matrix.test_group }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     strategy:
       # A lost native-test runner must not cancel the independent test groups.
       fail-fast: false
       matrix:
+        runner: [macos-15-intel, macos-15]
         test_group: [custody, custody-rights, remaining]
+        include:
+          - runner: macos-15-intel
+            arch: x86_64
+          - runner: macos-15
+            arch: arm64
     env:
       TEST_GROUP: ${{ matrix.test_group }}
       CCACHE_MAXSIZE: 2GiB
@@ -57,10 +69,34 @@ jobs:
           add_subdirectory("$ENV{GITHUB_WORKSPACE}" custody)
           CMAKE
 
+      - name: Verify native architecture
+        run: test "$(uname -m)" = '${{ matrix.arch }}'
+
+      - name: Select Xcode with C++20 stop tokens
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          import re
+
+          installations = []
+          for application in Path('/Applications').glob('Xcode_*.app'):
+              match = re.fullmatch(r'Xcode_(\d+(?:\.\d+)*)\.app', application.name)
+              if match:
+                  version = tuple(int(part) for part in match[1].split('.'))
+                  if version >= (26,):
+                      installations.append((version, application))
+          if not installations:
+              raise RuntimeError('An installed Xcode 26 or newer is required for C++20 stop tokens.')
+          developer = max(installations)[1] / 'Contents/Developer'
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as environment:
+              environment.write(f'DEVELOPER_DIR={developer}\n')
+          print(f'Selected Xcode: {developer}', flush=True)
+
       - name: Install and identify compiler cache
         id: compiler_cache
         run: |
-          brew install ccache
+          brew install ccache ninja
           echo "CCACHE_DIR=${RUNNER_TEMP}/vnm-process-custody-ccache" >> "${GITHUB_ENV}"
           {
             ccache --version
@@ -96,6 +132,11 @@ jobs:
           ccache --zero-stats
           cmake -B build -S "${RUNNER_TEMP}/custody-ci-source" -G Ninja \
             -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+            -DCMAKE_C_COMPILER="$(xcrun --find clang)" \
+            -DCMAKE_CXX_COMPILER="$(xcrun --find clang++)" \
+            -DCMAKE_OSX_SYSROOT="$(xcrun --show-sdk-path)" \
+            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET} \
             -DVNM_TERMINAL_BUILD_BENCHMARKS=OFF \
             -DVNM_TERMINAL_ENABLE_PROFILING=OFF \
             -DBUILD_TESTING=ON
@@ -118,7 +159,7 @@ jobs:
 
       # A runner lost during tests cannot run post-job cache saves.
       - name: Save main build compiler cache
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.restore_compiler_cache.outcome == 'success' && (steps.build.outcome == 'success' || steps.build.outcome == 'failure') }}
         uses: actions/cache/save@v5
         with:
           path: ${{ env.CCACHE_DIR }}
@@ -128,7 +169,7 @@ jobs:
         if: ${{ !cancelled() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure') }}
         uses: actions/upload-artifact@v6
         with:
-          name: macos-compiler-cache-${{ matrix.test_group }}-${{ github.run_attempt }}
+          name: macos-compiler-cache-${{ matrix.arch }}-${{ matrix.test_group }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/compiler-cache-*.txt
           if-no-files-found: error
 
@@ -176,7 +217,7 @@ jobs:
       - name: Upload test inventory before execution
         uses: actions/upload-artifact@v6
         with:
-          name: macos-test-inventory-${{ matrix.test_group }}-${{ github.run_attempt }}
+          name: macos-test-inventory-${{ matrix.arch }}-${{ matrix.test_group }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/ctest-inventory-*.json
             ${{ runner.temp }}/ctest-arguments.json
@@ -207,7 +248,7 @@ jobs:
         if: ${{ !cancelled() && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure') }}
         uses: actions/upload-artifact@v6
         with:
-          name: macos-test-results-${{ matrix.test_group }}-${{ github.run_attempt }}
+          name: macos-test-results-${{ matrix.arch }}-${{ matrix.test_group }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/ctest-output.log
             ${{ runner.temp }}/ctest-results.xml

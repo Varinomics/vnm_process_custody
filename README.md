@@ -1,5 +1,9 @@
 # Native process custody
 
+[![Windows](https://github.com/Varinomics/vnm_process_custody/actions/workflows/native-windows.yml/badge.svg)](https://github.com/Varinomics/vnm_process_custody/actions/workflows/native-windows.yml)
+[![Linux](https://github.com/Varinomics/vnm_process_custody/actions/workflows/native-linux.yml/badge.svg)](https://github.com/Varinomics/vnm_process_custody/actions/workflows/native-linux.yml)
+[![macOS](https://github.com/Varinomics/vnm_process_custody/actions/workflows/native-macos.yml/badge.svg)](https://github.com/Varinomics/vnm_process_custody/actions/workflows/native-macos.yml)
+
 This standalone library supplies process spawning, descriptor transport and a
 separate command owner executable. The caller waits only its direct helper;
 the helper retains the workload's wait authority. Workload exit and cleanup
@@ -29,8 +33,8 @@ queued-build --slots 1 -- cmake --install ../custody-build --prefix ../custody-i
 
 On macOS, add `-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0` to configuration. Native
 tests are enabled by default when this is the top-level project and disabled
-when it is added as a subdirectory. Windows builds the native static library;
-there is no standalone Windows test target.
+when it is added as a subdirectory. Windows builds the native static library
+and standalone Job-object snapshot tests.
 MSVC consumers using AddressSanitizer must also set
 `VNM_PROCESS_CUSTODY_SANITIZE_ADDRESS=ON` so both sides use matching container
 annotations.

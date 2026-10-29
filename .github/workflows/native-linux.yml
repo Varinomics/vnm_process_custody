@@ -6,6 +6,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 defaults:
   run:
     shell: bash
@@ -20,12 +24,13 @@ env:
   LINUX_SYSTEM_DEPS: >-
     libgl-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev
     libxi-dev libxext-dev libwayland-dev libxkbcommon-dev libvulkan-dev
-    fontconfig fonts-dejavu-core fonts-liberation ccache
+    fontconfig fonts-dejavu-core fonts-liberation ccache ninja-build
 
 jobs:
   build-and-test:
     name: Process Custody And Terminal Owner (Linux)
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
@@ -71,7 +76,7 @@ jobs:
               "$(gcc -print-prog-name=cc1)" "$(g++ -print-prog-name=cc1plus)"
           } | tee "${RUNNER_TEMP}/compiler-cache-toolchain.txt"
           toolchain_hash=$(sha256sum "${RUNNER_TEMP}/compiler-cache-toolchain.txt" | cut -d ' ' -f 1)
-          echo "key_prefix=${RUNNER_OS}-${RUNNER_ARCH}-surface-ccache-${CMAKE_BUILD_TYPE}-${toolchain_hash}-" >> "${GITHUB_OUTPUT}"
+          echo "key_prefix=${RUNNER_OS}-${RUNNER_ARCH}-process-custody-ccache-${CMAKE_BUILD_TYPE}-${toolchain_hash}-" >> "${GITHUB_OUTPUT}"
 
       - name: Restore compiler cache
         id: restore_compiler_cache
@@ -109,18 +114,20 @@ jobs:
         working-directory: build
         env:
           QT_QPA_PLATFORM: offscreen
-        run: ctest --output-on-failure -E '^vnm_process_custody_cpu_(accounting|owner_loss|client_loss)_tests$'
-
-      - name: Verify delegated CPU accounting
         run: |
-          report="${RUNNER_TEMP}/surface-cpu-accounting.xml"
+          ctest --output-on-failure --no-tests=error --output-junit results.xml \
+            -E '^vnm_process_custody_(cpu_(accounting|owner_loss|client_loss)|cgroup_snapshot)_tests$'
+
+      - name: Verify delegated CPU accounting and snapshots
+        run: |
+          report="${RUNNER_TEMP}/custody-delegated-native.xml"
           sudo systemd-run --wait --pipe --collect \
             --property=Delegate=yes \
             --property="User=$(id -un)" \
             --working-directory="${GITHUB_WORKSPACE}/build" \
             "$(command -v ctest)" --verbose --output-on-failure --no-tests=error \
             --output-junit "${report}" \
-            -R '^vnm_process_custody_cpu_(accounting|owner_loss|client_loss)_tests$'
+            -R '^vnm_process_custody_(cpu_(accounting|owner_loss|client_loss)|cgroup_snapshot)_tests$'
           python3 - "${report}" <<'PY'
           import sys
           import xml.etree.ElementTree as element_tree
@@ -130,13 +137,14 @@ jobs:
               'vnm_process_custody_cpu_accounting_tests',
               'vnm_process_custody_cpu_owner_loss_tests',
               'vnm_process_custody_cpu_client_loss_tests',
+              'vnm_process_custody_cgroup_snapshot_tests',
           }
           if len(cases) != len(expected) or {case.get('name') for case in cases} != expected:
-              raise SystemExit('CPU accounting report does not contain all three required native cases')
+              raise SystemExit('Delegated report does not contain all four required native cases')
           for case in cases:
               if any(case.find(result) is not None for result in ('skipped', 'failure', 'error')):
-                  raise SystemExit(f"Native CPU accounting did not pass: {case.get('name')}")
-          print('All three delegated native CPU accounting cases passed without skips')
+                  raise SystemExit(f"Delegated native case did not pass: {case.get('name')}")
+          print('All four delegated native CPU accounting and snapshot cases passed without skips')
           PY
 
       - name: Report compiler cache usage
@@ -149,3 +157,15 @@ jobs:
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ steps.restore_compiler_cache.outputs.cache-primary-key }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: linux-process-custody-${{ github.run_attempt }}
+          path: |
+            build/results.xml
+            build/Testing/Temporary/LastTest.log
+            build/CMakeFiles/CMakeConfigureLog.yaml
+            ${{ runner.temp }}/custody-delegated-native.xml
+          if-no-files-found: ignore

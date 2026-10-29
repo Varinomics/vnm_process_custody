@@ -1,0 +1,103 @@
+name: Process Custody Windows
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CMAKE_BUILD_TYPE: Release
+  CMAKE_GENERATOR: Ninja
+  CMAKE_CXX_COMPILER_LAUNCHER: sccache
+  SCCACHE_GHA_ENABLED: 'true'
+
+jobs:
+  build-and-test:
+    name: Process Custody (Windows x64, MSVC v145)
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Visual Studio 2026
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+          toolset: '14.51'
+
+      - name: Verify Visual Studio 2026 environment
+        shell: pwsh
+        run: |
+          if ($env:VisualStudioVersion -ne '18.0' -or $env:VCToolsVersion -notlike '14.51.*') {
+            throw 'Visual Studio 2026 with MSVC v145 is required.'
+          }
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $installation = & $vswhere -latest -products * -version '[18.0,19.0)' -format json |
+            ConvertFrom-Json
+          $installation | Select-Object installationPath, isComplete, isLaunchable | Format-List
+          if (-not $installation.isComplete -or -not $installation.isLaunchable) {
+            throw 'The Visual Studio 2026 installation must be complete and launchable.'
+          }
+          $reboot = [ordered]@{
+            CBS = Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending'
+            WindowsUpdate = Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
+            PendingFileRename = [bool](Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' `
+              -Name PendingFileRenameOperations -ErrorAction SilentlyContinue).PendingFileRenameOperations
+          }
+          $reboot | ConvertTo-Json
+          "VNM_VCVARSALL_PATH=$($env:VSINSTALLDIR)VC\Auxiliary\Build\vcvarsall.bat" >> $env:GITHUB_ENV
+
+      # Hosted CMake has no FASTBuild generator; Ninja supports compiler launchers.
+      - name: Set up persistent compiler cache
+        id: compiler-cache
+        uses: mozilla-actions/sccache-action@v0.0.11
+
+      - name: Configure
+        shell: cmd
+        run: |
+          call "%VNM_VCVARSALL_PATH%" x64 -vcvars_ver=14.51
+          if errorlevel 1 exit /b %ERRORLEVEL%
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded -DVNM_PROCESS_CUSTODY_BUILD_TESTS=ON
+
+      - name: Verify configured compiler
+        shell: pwsh
+        run: |
+          $entry = Select-String -Path build/CMakeCache.txt -Pattern '^CMAKE_CXX_COMPILER:FILEPATH=(.+)$'
+          $compiler = $entry.Matches.Groups[1].Value.Replace('\', '/')
+          $vs_root = $env:VSINSTALLDIR.Replace('\', '/')
+          Write-Output "CMAKE_CXX_COMPILER=$compiler"
+          if (-not $compiler.StartsWith($vs_root, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'The configured compiler must belong to Visual Studio 2026.'
+          }
+
+      - name: Build
+        shell: cmd
+        run: |
+          call "%VNM_VCVARSALL_PATH%" x64 -vcvars_ver=14.51
+          if errorlevel 1 exit /b %ERRORLEVEL%
+          cmake --build build --parallel 2
+
+      - name: Run native Job-object snapshot tests
+        run: ctest --test-dir build --output-on-failure --no-tests=error --output-junit results.xml
+
+      - name: Compiler cache statistics
+        if: always() && steps.compiler-cache.outcome == 'success'
+        run: sccache --show-stats
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-process-custody-${{ github.run_attempt }}
+          path: |
+            build/results.xml
+            build/Testing/Temporary/LastTest.log
+            build/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: ignore
