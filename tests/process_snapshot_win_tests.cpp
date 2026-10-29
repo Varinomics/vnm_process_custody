@@ -173,6 +173,20 @@ std::set<std::int64_t> snapshot_members(const custody::Process_snapshot& snapsho
 
 bool inaccessible_metrics(HANDLE job, Child& child)
 {
+    HANDLE process_token = nullptr;
+    if (!check(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_ADJUST_PRIVILEGES,
+            &process_token), "retain fixture process privileges"))
+    {
+        return false;
+    }
+    Handle token(process_token, &CloseHandle);
+    TOKEN_PRIVILEGES disabled{};
+    disabled.PrivilegeCount = 1;
+    if (!check(LookupPrivilegeValueW(nullptr, L"SeDebugPrivilege", &disabled.Privileges[0].Luid),
+            "identify the privilege that bypasses process ACLs"))
+    {
+        return false;
+    }
     PACL original_acl = nullptr;
     PSECURITY_DESCRIPTOR original = nullptr;
     if (!check(GetSecurityInfo(child.process.get(), SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION,
@@ -191,10 +205,24 @@ bool inaccessible_metrics(HANDLE job, Child& child)
     {
         return false;
     }
+    // Hosted administrators may bypass the empty ACL through this privilege.
+    TOKEN_PRIVILEGES previous{};
+    DWORD previous_size = 0;
+    bool ok = check(
+        AdjustTokenPrivileges(token.get(), FALSE, &disabled, sizeof(previous), &previous, &previous_size),
+        "disable the fixture's process ACL bypass privilege");
+    if (previous.PrivilegeCount != 0) {
+        std::puts("Disabled SeDebugPrivilege for the native access-denial fixture");
+    }
+    Handle query(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, child.process_id), &CloseHandle);
+    ok &= check(!query && GetLastError() == ERROR_ACCESS_DENIED,
+        "native process query is denied before testing unavailable metrics");
     const auto snapshot = custody::job_process_snapshot(job);
+    ok &= check(AdjustTokenPrivileges(token.get(), FALSE, &previous, 0, nullptr, nullptr),
+        "restore fixture process privileges");
     const bool restored = SetSecurityInfo(child.process.get(), SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION,
         nullptr, nullptr, original_acl, nullptr) == ERROR_SUCCESS;
-    bool ok = check(restored, "restore fixture process ACL");
+    ok &= check(restored, "restore fixture process ACL");
     const auto* entry = snapshot ? find(*snapshot, child.process_id) : nullptr;
     ok &= check(entry != nullptr, "unreadable member remains in its Job snapshot");
     if (entry) {
