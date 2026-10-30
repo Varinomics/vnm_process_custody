@@ -1,5 +1,8 @@
 # Terminal Process Owner
 
+Unresolved cross-repository terminal work is tracked in
+[terminal responsiveness](terminal_responsiveness.md).
+
 The optional adapter supplies `vnm_terminal::Terminal_process_owner` to the
 public surface's built-in POSIX backend. The surface continues to own PTY I/O,
 input and output queues, resize, parser/model state, and rendering. Standalone
