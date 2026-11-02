@@ -96,6 +96,10 @@ if(CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin)$")
             set_tests_properties(vnm_process_custody_snapshot_tests PROPERTIES TIMEOUT 30)
             add_test(NAME vnm_process_custody_cgroup_snapshot_tests COMMAND vnm_process_custody_snapshot_tests --cgroup)
             set_tests_properties(vnm_process_custody_cgroup_snapshot_tests PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+            add_test(NAME vnm_process_custody_threaded_cgroup_snapshot_tests
+                COMMAND vnm_process_custody_snapshot_tests --cgroup-threaded)
+            set_tests_properties(vnm_process_custody_threaded_cgroup_snapshot_tests PROPERTIES
+                TIMEOUT 30 SKIP_RETURN_CODE 77)
         endif()
         find_package(Threads REQUIRED)
         if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
@@ -117,6 +121,12 @@ if(CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin)$")
             add_test(NAME vnm_process_custody_cpu_observation_tests
                 COMMAND vnm_process_custody_cpu_observation_tests)
             set_tests_properties(vnm_process_custody_cpu_observation_tests PROPERTIES TIMEOUT 15)
+            add_executable(vnm_process_custody_darwin_snapshot_probe
+                tests/process_snapshot_darwin_probe.cpp)
+            target_link_libraries(vnm_process_custody_darwin_snapshot_probe PRIVATE
+                vnm_process_custody Threads::Threads)
+            set_target_properties(vnm_process_custody_darwin_snapshot_probe PROPERTIES
+                AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
             add_test(NAME vnm_process_custody_truncated_rights_tests
                 COMMAND vnm_process_custody_tests --truncated-rights)
             set_tests_properties(vnm_process_custody_truncated_rights_tests PROPERTIES TIMEOUT 10)

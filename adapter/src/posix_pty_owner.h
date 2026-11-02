@@ -52,6 +52,11 @@ static_assert(requires(pty_custody::Duplex_channel& channel,
 
 constexpr std::chrono::seconds k_owner_startup_timeout(10);
 constexpr std::chrono::milliseconds k_owner_startup_receive_slice(100);
+#if defined(__linux__)
+constexpr int k_owner_runtime_receive_timeout = -1;
+#else
+constexpr int k_owner_runtime_receive_timeout = 100;
+#endif
 
 int owner_startup_remaining_ms(std::chrono::steady_clock::time_point deadline)
 {
@@ -426,7 +431,7 @@ private:
     }
 
     pty_custody::Receive_status receive(pty_custody::Owner_event* event,
-        std::string* error, int timeout_ms = 100) noexcept
+        std::string* error, int timeout_ms = k_owner_runtime_receive_timeout) noexcept
     {
         pty_custody::Receive_status status;
         try {

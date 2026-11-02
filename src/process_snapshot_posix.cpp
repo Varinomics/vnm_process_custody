@@ -28,7 +28,7 @@ bool collect_members(int directory, std::set<std::int64_t>* members, bool covere
 {
     const int descriptor = openat(directory, "cgroup.procs", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (descriptor < 0) {
-        return errno == ENOENT || errno == ENODEV || (errno == EOPNOTSUPP && covered_by_parent);
+        return errno == ENOENT || errno == ENODEV;
     }
     std::string text;
     char bytes[4096];
@@ -38,8 +38,10 @@ bool collect_members(int directory, std::set<std::int64_t>* members, bool covere
             continue;
         }
         if (count < 0) {
+            const int read_error = errno;
             close(descriptor);
-            return false;
+            // A threaded subtree's processes were read from its domain ancestor.
+            return read_error == EOPNOTSUPP && covered_by_parent;
         }
         if (count == 0) {
             break;

@@ -7,9 +7,11 @@
 #include <chrono>
 #include <cstdlib>
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 #if defined(__APPLE__)
 #include <limits.h>
 #include <sys/stat.h>
@@ -252,11 +254,37 @@ int run_owner(custody::Duplex_channel& channel, bool darwin_pty_contract)
             (void)emit(event);
         }
     };
+#if defined(__linux__)
+    std::vector<pollfd> wait_descriptors{{channel.native(), POLLIN, 0}};
+    for (const auto handle : tree.exit_wait_handles()) {
+        wait_descriptors.push_back({handle, POLLIN, 0});
+    }
+#endif
     while (!stopping) {
         report(tree.reap_available());
         if (root_reported) break;
+#if defined(__linux__)
+        // SIGCHLD stays pending on the tree's signalfd across the reap/wait
+        // boundary. Control EOF and commands wake the same wait, so idle
+        // owners need no timer or per-timeout protocol receive buffer.
+        int ready;
+        do {
+            ready = poll(wait_descriptors.data(), wait_descriptors.size(), -1);
+        }
+        while (ready < 0 && errno == EINTR);
+        if (ready < 0) {
+            stopping = true;
+            break;
+        }
+        if (wait_descriptors.front().revents == 0) {
+            continue;
+        }
+        constexpr int receive_timeout_ms = 0;
+#else
+        constexpr int receive_timeout_ms = 25;
+#endif
         detail::Owner_message incoming;
-        const auto status = detail::receive_message(channel, &incoming, 25, &error);
+        const auto status = detail::receive_message(channel, &incoming, receive_timeout_ms, &error);
         if (status == custody::Receive_status::TIMEOUT) continue;
         if (status != custody::Receive_status::MESSAGE) { stopping = true; break; }
         if (incoming.kind == detail::Message_kind::RESIZE && master >= 0) {
