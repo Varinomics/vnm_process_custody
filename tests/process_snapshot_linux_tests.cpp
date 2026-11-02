@@ -203,6 +203,78 @@ const custody::Process_snapshot_entry* find(const custody::Process_snapshot& sna
     return found == snapshot.processes.end() ? nullptr : &*found;
 }
 
+bool write_cgroup_file(int directory, const char* path, const std::string& value)
+{
+    const int descriptor = openat(directory, path, O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (descriptor < 0) {
+        std::perror(path);
+        return false;
+    }
+    const bool written = write(descriptor, value.data(), value.size()) == (ssize_t)value.size();
+    if (!written) {
+        std::perror(path);
+    }
+    close(descriptor);
+    return written;
+}
+
+int threaded_cgroup_snapshot(Fixture& fixture)
+{
+    custody::Process_cpu_scope scope;
+    std::string error;
+    if (!scope.establish("snapshot-threaded-" + std::to_string(getpid()), &error)) {
+        std::printf("SKIP: native threaded cgroup snapshot: %s\n", error.c_str());
+        return 77;
+    }
+    custody::Spawn_request request;
+    scope.configure_spawn(request);
+    const int directory = request.cpu_accounting_cgroup;
+    for (const char* path : {"domain", "domain/nested", "thread-root", "thread-root/leaf"}) {
+        if (!check(mkdirat(directory, path, 0700) == 0, "create isolated native cgroup topology")) {
+            std::perror(path);
+            return 1;
+        }
+    }
+    if (!check(
+            write_cgroup_file(directory, "thread-root/leaf/cgroup.type", "threaded") &&
+            write_cgroup_file(directory, "domain/nested/cgroup.procs", std::to_string(fixture.intermediate())) &&
+            write_cgroup_file(directory, "thread-root/leaf/cgroup.procs", std::to_string(fixture.workload())),
+        "place retained fixture members in ordinary and threaded descendant scopes"))
+    {
+        return 1;
+    }
+
+    // The kernel rejects this read through its sequence callback. A test that
+    // only injects an open failure would miss the production failure boundary.
+    const int membership = openat(directory, "thread-root/leaf/cgroup.procs", O_RDONLY | O_CLOEXEC);
+    if (!check(membership >= 0, "threaded cgroup.procs opens successfully")) {
+        return 1;
+    }
+    char byte = 0;
+    errno = 0;
+    const auto count = read(membership, &byte, sizeof(byte));
+    const int read_error = errno;
+    close(membership);
+    bool ok = check(count < 0 && read_error == EOPNOTSUPP,
+        "threaded cgroup.procs returns EOPNOTSUPP from read");
+
+    const int leaf = openat(directory, "thread-root/leaf", O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+    if (!check(leaf >= 0, "retain threaded leaf directory")) {
+        return 1;
+    }
+    ok &= check(!custody::cgroup_process_snapshot(leaf),
+        "a threaded leaf alone cannot prove complete process membership");
+    close(leaf);
+
+    const auto snapshot = scope.process_snapshot();
+    ok &= check(snapshot && snapshot->processes.size() == 2 &&
+            find(*snapshot, fixture.intermediate()) && find(*snapshot, fixture.workload()) &&
+            !find(*snapshot, fixture.helper()) && !find(*snapshot, getpid()),
+        "complete snapshot preserves ordinary nested-domain and threaded-subtree members");
+    std::puts(ok ? "PASS: native threaded cgroup snapshots" : "FAIL: native threaded cgroup snapshots");
+    return ok ? 0 : 1;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -211,6 +283,9 @@ int main(int argc, char** argv)
     Fixture fixture;
     if (!check(fixture.start(), "start dedicated subreaper, intermediate, and detached workload")) {
         return 1;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--cgroup-threaded") {
+        return threaded_cgroup_snapshot(fixture);
     }
     if (argc == 2 && std::string(argv[1]) == "--cgroup") {
         custody::Process_cpu_scope scope;
