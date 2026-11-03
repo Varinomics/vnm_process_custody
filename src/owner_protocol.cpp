@@ -18,6 +18,7 @@ constexpr std::uint32_t k_wire_revision = 1;
 constexpr std::size_t k_max_list_entries = 65536;
 constexpr std::size_t k_max_request_bytes = 4 * 1024 * 1024;
 constexpr std::uint32_t k_fragment_kind = 5;
+constexpr std::size_t k_fragment_header_bytes = 4 * sizeof(std::uint32_t);
 constexpr std::uint32_t k_cleanup_scope_extension = 1;
 constexpr std::uint32_t k_darwin_birth_extension = 2;
 constexpr std::uint32_t k_cpu_accounting_extension = 3;
@@ -123,8 +124,13 @@ bool send(Duplex_channel& channel, const Encoder& message,
         return false;
     }
     bool transferred = true;
+    Encoder fragment;
+    if (!message.bytes.empty()) {
+        fragment.bytes.reserve(std::min(
+            message.bytes.size() + k_fragment_header_bytes, k_owner_message_bytes));
+    }
     for (std::size_t offset = 0; offset < message.bytes.size();) {
-        Encoder fragment;
+        fragment.bytes.clear();
         fragment.number(k_wire_revision);
         fragment.number(k_fragment_kind);
         fragment.number(static_cast<std::uint32_t>(message.bytes.size()));
