@@ -1,29 +1,30 @@
 # Contributing
 
-This repository adopts the
-[Varinomics contribution policy](https://github.com/Varinomics/vnm_terminal_surface/blob/master/docs/contributions/contribution-policy.md).
-Contributors retain ownership and grant GPL and alternative licensing rights,
-including proprietary terms and downstream sublicensing. The repository's
-[GPL licence](LICENSE) remains in effect for its GPL distribution.
+Open your pull request normally and follow the CLA bot's comment to read
+and accept the applicable agreement from your own GitHub account. The bot
+records acceptance automatically and reuses it for future pull requests to
+this repository under that version and capacity. No email or form upload
+is needed.
 
-Each human author and co-author needs the verified
-[individual CLA v1.0](https://github.com/Varinomics/vnm_terminal_surface/blob/master/docs/contributions/individual-cla-v1.0.md).
-Employer/client-owned work also needs the relevant
-[corporate grant and designated-contributor authorisation](https://github.com/Varinomics/vnm_terminal_surface/blob/master/docs/contributions/corporate-cla-v1.0.md).
-Send the full executed agreement privately to **info@varinomics.com** as the
-form instructs. Read the
+Use the
+[individual CLA v1.1](https://github.com/Varinomics/vnm_terminal_surface/blob/master/docs/contributions/individual-cla-v1.1.md)
+for rights you control, or the
+[corporate CLA v1.1](https://github.com/Varinomics/vnm_terminal_surface/blob/master/docs/contributions/corporate-cla-v1.1.md)
+when authorised to bind the named Entity. One corporate acceptance grants
+your own and the Entity's relevant rights without a second individual
+signature. A representative can authorise other contributors online only for
+rights the representative controls.
+
+This repository adopts the
+[contribution policy](https://github.com/Varinomics/vnm_terminal_surface/blob/master/docs/contributions/contribution-policy.md),
+preserving ownership while permitting GPL and alternative licensing,
+including proprietary terms and downstream sublicensing. Its [GPL licence](LICENSE)
+continues to govern GPL distribution. Read the
 [contribution privacy notice](https://github.com/Varinomics/vnm_terminal_surface/blob/master/docs/contributions/privacy.md).
 
-Use the pull-request template to identify all authors and disclose imported
-or adapted material. A signature does not approve an import. Maintainers
-inspect its actual licence and retain origin and obligation records using the
-[third-party material procedure](https://github.com/Varinomics/vnm_terminal_surface/blob/master/docs/contributions/third-party-materials.md).
-Preserve this repository's [NOTICE](NOTICE) and add any required import
-records under `THIRD_PARTY/` with the imported work.
-
-Both `cla/coverage (records N)` and
-`contributions/material-review (records N)` are required before merge, with
-`N` matching the registry generation required by the merge rules. See
-[agreement administration](https://github.com/Varinomics/vnm_terminal_surface/blob/master/docs/contributions/administration.md)
-for record verification, corporate rosters, versions and scoped exceptions.
-Earlier commits do not acquire missing rights through this policy.
+Identify all authors and disclose imported or adapted material in the
+pull-request template. Maintainers inspect the actual licence and preserve
+origins and obligations under the
+[third-party procedure](https://github.com/Varinomics/vnm_terminal_surface/blob/master/docs/contributions/third-party-materials.md).
+Keep this repository's [NOTICE](NOTICE) and add required import records under
+`THIRD_PARTY/` with the imported work. CLA acceptance alone does not approve it.
