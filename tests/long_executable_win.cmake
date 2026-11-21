@@ -1,0 +1,18 @@
+cmake_minimum_required(VERSION 3.21)
+
+string(RANDOM LENGTH 12 nonce)
+set(root "${CMAKE_CURRENT_BINARY_DIR}/long-executable-${nonce}")
+set(relative "staged adapter")
+string(LENGTH "${root}/${relative}/adapter.exe" length)
+while(length LESS 280)
+    string(APPEND relative "/long generation directory")
+    string(LENGTH "${root}/${relative}/adapter.exe" length)
+endwhile()
+file(MAKE_DIRECTORY "${root}/${relative}")
+file(COPY_FILE "${PROGRAM}" "${root}/${relative}/adapter.exe")
+execute_process(COMMAND "${PROGRAM}" "${relative}/./adapter.exe"
+    WORKING_DIRECTORY "${root}" RESULT_VARIABLE result)
+file(REMOVE_RECURSE "${root}")
+if(NOT result STREQUAL "0")
+    message(FATAL_ERROR "Long executable test returned ${result}")
+endif()

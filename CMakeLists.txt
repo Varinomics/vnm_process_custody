@@ -27,6 +27,12 @@ if(WIN32 AND VNM_PROCESS_CUSTODY_BUILD_TESTS)
     set_target_properties(vnm_process_custody_snapshot_tests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
     add_test(NAME vnm_process_custody_snapshot_tests COMMAND vnm_process_custody_snapshot_tests)
     set_tests_properties(vnm_process_custody_snapshot_tests PROPERTIES TIMEOUT 30)
+    add_executable(vnm_process_custody_spawn_tests tests/process_spawn_win_tests.cpp)
+    target_link_libraries(vnm_process_custody_spawn_tests PRIVATE vnm_process_custody)
+    add_test(NAME vnm_process_custody_long_executable
+        COMMAND ${CMAKE_COMMAND} "-DPROGRAM=$<TARGET_FILE:vnm_process_custody_spawn_tests>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/long_executable_win.cmake")
+    set_tests_properties(vnm_process_custody_long_executable PROPERTIES TIMEOUT 30)
 endif()
 if(CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin)$")
     list(APPEND _native_sources src/process_pipe_posix.cpp src/process_stream_posix.cpp

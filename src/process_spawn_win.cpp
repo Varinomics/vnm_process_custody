@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <filesystem>
 #include <set>
+#include <utility>
 
 namespace vnm::process_custody {
 
@@ -91,6 +93,34 @@ std::string ascii_lowercase(std::string_view in_text)
         }
     }
     return lowered;
+}
+
+void prepare_executable_path(std::wstring& executable)
+{
+    if (executable.size() < MAX_PATH || !std::filesystem::path(executable).is_absolute() ||
+        executable.starts_with(LR"(\\?\)") || executable.starts_with(LR"(\\.\)"))
+    {
+        return;
+    }
+
+    // The extended namespace bypasses DOS path normalization. Resolve the
+    // caller's separators and dot components before passing the image to Win32.
+    const DWORD size = GetFullPathNameW(executable.c_str(), 0, nullptr, nullptr);
+    if (!size) {
+        return;
+    }
+    std::wstring full(size, L'\0');
+    const DWORD length = GetFullPathNameW(executable.c_str(), size, full.data(), nullptr);
+    if (!length || length >= size) {
+        return;
+    }
+    full.resize(length);
+    if (length < MAX_PATH || full.starts_with(LR"(\\?\)") || full.starts_with(LR"(\\.\)")) {
+        executable = std::move(full);
+    }
+    else {
+        executable = full.starts_with(LR"(\\)") ? LR"(\\?\UNC\)" + full.substr(2) : LR"(\\?\)" + full;
+    }
 }
 
 } // namespace
@@ -283,6 +313,7 @@ Spawn_result spawn(const Spawn_request& in_request)
 
     // Suspended creation is what makes Job admission happen before the first
     // instruction of the child; the resume below is the admission point.
+    prepare_executable_path(executable);
     PROCESS_INFORMATION process{};
     const BOOL created = CreateProcessW(
         executable.c_str(),
