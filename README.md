@@ -13,6 +13,10 @@ The core supports Windows, Linux and macOS, requires C++20 and CMake 3.21 or
 newer, and has no Qt dependency. Its public target is
 `vnm_process_custody::vnm_process_custody`.
 
+The library, helper and optional adapter in this repository use the
+[BSD 2-Clause License](LICENSE). The core package installs its license
+and [notice](NOTICE) under `share/licenses/vnm_process_custody/` by default.
+
 The optional [terminal process owner](adapter/docs/building.md) implements the
 public, Qt-free `vnm_terminal::Terminal_process_owner` extension for POSIX hosts.
 The surface supplies native terminal I/O and an ordinary built-in owner without
@@ -24,11 +28,11 @@ application needs retained receipts and the enhanced cleanup/accounting scope.
 For a standalone Linux or macOS build with the native tests:
 
 ```sh
-queued-build --slots 1 -- cmake -S . -B ../custody-build -G Ninja \
+cmake -S . -B ../custody-build -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DVNM_PROCESS_CUSTODY_BUILD_TESTS=ON
-queued-build --slots 4 -- cmake --build ../custody-build --parallel 4
+cmake --build ../custody-build --parallel 4
 ctest --test-dir ../custody-build --output-on-failure
-queued-build --slots 1 -- cmake --install ../custody-build --prefix ../custody-install
+cmake --install ../custody-build --prefix ../custody-install
 ```
 
 On macOS, add `-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0` to configuration. Native

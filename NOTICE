@@ -1,4 +1,9 @@
 Copyright © 2026 Varinomics Ltd.
 
-The native process custody library and owner helper are licensed under the
-GNU General Public License, version 3. See LICENSE for the complete terms.
+Varinomics licenses the source in this repository, including the native
+process custody library, the owner helper and the optional terminal process
+owner adapter, under the BSD 2-Clause License. See LICENSE for the terms.
+
+The optional adapter uses the separately licensed vnm_terminal_surface
+process owner contract. On Linux and macOS it also links Qt Core. Those
+dependencies retain their own licenses.

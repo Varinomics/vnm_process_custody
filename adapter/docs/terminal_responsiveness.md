@@ -74,12 +74,12 @@ retirement and finite, generation-safe autonomous atlas recovery, whose retry
 budget internal rollback must not replenish. Native helpers alone do not prove
 application startup, resize, input and shutdown integration.
 
-Use the current build policy and exact candidate source. This work's Windows
-verification requires queued distributed FASTBuild on XENIA with no local
-fallback; Linux changes also require native Linux execution. Report unavailable
-infrastructure rather than claiming cross-platform coverage. Private hosted CI
-requires a person's dispatch. Obtain independent review of changed lifecycle
-and integration behavior; do not repeat completed unrelated qualification.
+Use the exact candidate source and run the relevant native Windows and Linux
+checks. Record any unavailable native coverage. Maintainers can start the
+[Windows](../../.github/workflows/native-windows.yml) and
+[Linux](../../.github/workflows/native-linux.yml) workflows manually. Focus
+qualification and independent review on the changed lifecycle and integration
+behavior.
 
 The reported disappearance of idle windows on mouseover did not establish a GPU
 reset or a termination cause. Completing these corrections does not itself prove

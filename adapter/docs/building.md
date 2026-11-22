@@ -28,6 +28,11 @@ owner target and deployment helper. Package producers enable
 `CMAKE_PREFIX_PATH`. The option defaults to `OFF`; core-only consumers retain
 the standalone core build.
 
+The adapter package installs its BSD 2-Clause license and notice under
+`share/licenses/vnm_process_custody_terminal_owner/` by default. The
+terminal surface contract and the Qt Core library used on Linux and macOS
+retain their own licenses. [Terminal surface license](https://github.com/Varinomics/vnm_terminal_surface/blob/master/LICENSE)
+
 POSIX applications include `vnm_process_custody/terminal_process_owner.h`, create
 an owner with `vnm::process_custody::make_terminal_process_owner(receipt_hook)`,
 and pass it as the second argument to
@@ -48,9 +53,9 @@ package, and enhanced-owner integration tests.
 `VNM_PROCESS_CUSTODY_BUILD_TESTS=ON` separately enables the core's native tests.
 The public surface owns the native backend, generic terminal, and ConPTY tests.
 
-On Linux, the CPU accounting, owner-loss, and client-loss tests need delegated
-cgroup authority; a skipped result does not establish that coverage. The private
-Linux workflow retains this delegation and rejects skipped accounting cases.
-The private macOS workflow runs the core and enhanced-owner tests in independent
-groups and records their inventory before execution. Both workflows require
-manual dispatch; they are not release or automatic push workflows.
+On Linux, the CPU accounting, owner-loss and client-loss tests need delegated
+cgroup authority. The [Linux workflow](../../.github/workflows/native-linux.yml)
+provides this delegation and rejects skipped accounting cases.
+The [macOS workflow](../../.github/workflows/native-macos.yml) runs the core and
+enhanced-owner tests in separate groups and records their inventory before
+execution. Maintainers start both workflows manually.

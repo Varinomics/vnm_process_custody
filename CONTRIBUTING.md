@@ -15,11 +15,11 @@ your own and the Entity's relevant rights without a second individual
 signature. A representative can authorise other contributors online only for
 rights the representative controls.
 
-This repository adopts the
-[contribution policy](https://github.com/Varinomics/vnm_terminal_surface/blob/master/docs/contributions/contribution-policy.md),
-preserving ownership while permitting GPL and alternative licensing,
-including proprietary terms and downstream sublicensing. Its [GPL licence](LICENSE)
-continues to govern GPL distribution. Read the
+Contributors retain ownership. The agreements grant Varinomics the rights
+to distribute and sublicense contributions under this repository's
+[BSD 2-Clause licence](LICENSE) and alternative terms. The shared
+[contribution procedures](https://github.com/Varinomics/vnm_terminal_surface/blob/master/docs/contributions/contribution-policy.md#accept-online-when-the-cla-bot-asks)
+describe how the bot records acceptance and checks pull requests. Read the
 [contribution privacy notice](https://github.com/Varinomics/vnm_terminal_surface/blob/master/docs/contributions/privacy.md).
 
 Identify all authors and disclose imported or adapted material in the

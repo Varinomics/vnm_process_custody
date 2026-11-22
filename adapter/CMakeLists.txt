@@ -56,6 +56,8 @@ install(TARGETS vnm_process_custody_terminal_owner
     ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}")
 install(FILES include/vnm_process_custody/terminal_process_owner.h
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/vnm_process_custody")
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../LICENSE" "${CMAKE_CURRENT_SOURCE_DIR}/../NOTICE"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/vnm_process_custody_terminal_owner")
 install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/vnm_process_custody_terminal_owner-config.cmake"
     cmake/vnm_terminal_process_custody_contract.cmake
