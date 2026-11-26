@@ -193,6 +193,11 @@ endif()
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/vnm_process_custody_install.cmake")
 vnm_process_custody_register_source_package()
 
+option(VNM_PROCESS_CUSTODY_BUILD_QPROCESS "Build the Qt process creation adapter" OFF)
+if(VNM_PROCESS_CUSTODY_BUILD_QPROCESS)
+    add_subdirectory(qt)
+endif()
+
 option(VNM_PROCESS_CUSTODY_BUILD_TERMINAL_OWNER
     "Build optional terminal process ownership supplied to vnm_terminal_surface" OFF)
 if(VNM_PROCESS_CUSTODY_BUILD_TERMINAL_OWNER)

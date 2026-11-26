@@ -1,4 +1,5 @@
 #include <vnm_process_custody/process_spawn.h>
+#include "process_creation_attributes_win.h"
 
 #include <windows.h>
 
@@ -259,57 +260,16 @@ Spawn_result spawn(const Spawn_request& in_request)
         return result;
     }
 
-    const DWORD attribute_count = (in_request.job || in_request.generation_job) ? 2 : 1;
-    SIZE_T attribute_bytes = 0;
-    InitializeProcThreadAttributeList(nullptr, attribute_count, 0, &attribute_bytes);
-    if (attribute_bytes == 0) {
-        result.error = last_error_text("InitializeProcThreadAttributeList(size)");
+    Process_creation_attributes attributes;
+    if (const char* error = attributes.prepare(in_request.job, in_request.generation_job, !handle_list.empty())) {
+        result.error = last_error_text(error);
         return result;
     }
-    std::vector<unsigned char> attribute_storage(attribute_bytes);
-    LPPROC_THREAD_ATTRIBUTE_LIST attributes =
-        reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attribute_storage.data());
-    if (!InitializeProcThreadAttributeList(attributes, attribute_count, 0, &attribute_bytes)) {
-        result.error = last_error_text("InitializeProcThreadAttributeList");
-        return result;
-    }
-    struct Attribute_list_guard
-    {
-        LPPROC_THREAD_ATTRIBUTE_LIST list;
-        ~Attribute_list_guard() { DeleteProcThreadAttributeList(list); }
-    } attribute_guard{attributes};
-
-    if (!handle_list.empty() &&
-        !UpdateProcThreadAttribute(
-            attributes,
-            0,
-            PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-            handle_list.data(),
-            handle_list.size() * sizeof(HANDLE),
-            nullptr,
-            nullptr))
-    {
+    if (!handle_list.empty() && !attributes.set_handles(handle_list)) {
         result.error = last_error_text("UpdateProcThreadAttribute(HANDLE_LIST)");
         return result;
     }
-    HANDLE jobs[2]{};
-    std::size_t job_count = 0;
-    if (in_request.job) jobs[job_count++] = in_request.job;
-    if (in_request.generation_job) jobs[job_count++] = in_request.generation_job;
-    if (job_count &&
-        !UpdateProcThreadAttribute(
-            attributes,
-            0,
-            PROC_THREAD_ATTRIBUTE_JOB_LIST,
-            jobs,
-            job_count * sizeof(HANDLE),
-            nullptr,
-            nullptr))
-    {
-        result.error = last_error_text("UpdateProcThreadAttribute(JOB_LIST)");
-        return result;
-    }
-    startup.lpAttributeList = attributes;
+    startup.lpAttributeList = attributes.list();
 
     // Suspended creation is what makes Job admission happen before the first
     // instruction of the child; the resume below is the admission point.

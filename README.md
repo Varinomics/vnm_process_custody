@@ -13,7 +13,13 @@ The core supports Windows, Linux and macOS, requires C++20 and CMake 3.21 or
 newer, and has no Qt dependency. Its public target is
 `vnm_process_custody::vnm_process_custody`.
 
-The library, helper and optional adapter in this repository use the
+Qt applications can enable `VNM_PROCESS_CUSTODY_BUILD_QPROCESS` and link
+`vnm_process_custody::qprocess`. Installed-package consumers request the
+`qprocess` component. The adapter starts a configured `QProcess` and keeps
+its channels, signals and wait ownership. On Windows it supports job admission
+and restriction of inherited handles to the child's standard streams.
+
+The library, helper and optional adapters in this repository use the
 [BSD 2-Clause License](LICENSE). The core package installs its license
 and [notice](NOTICE) under `share/licenses/vnm_process_custody/` by default.
 
